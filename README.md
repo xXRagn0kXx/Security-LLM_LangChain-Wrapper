@@ -1,5 +1,164 @@
-# Security-LLM_LangChain-Wrapper
 
+
+
+# Security-LLM_LangChain-Wrapper
+## Fase 0 prueba de ejecucion rkllm
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Wrapper rkllm con Qwen3 usando pexpect para LangChain:
+
+- Envía un prompt
+- Captura toda la salida en logs con fecha/hora
+- Detecta automáticamente el final de la respuesta al ver el prompt "You:"
+- Cierra limpiamente con 'quit' y espera EOF
+"""
+
+import os
+import datetime
+import pexpect
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+
+MODEL_PATH = os.path.join(
+    PROJECT_ROOT,
+    "rknnllm-models",
+    "Qwen3-4B-rk3588-1.2.1",
+    "Qwen3-4B-rk3588-w8a8-opt-1-hybrid-ratio-0.0.rkllm"
+)
+
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+PROMPT = "Hola, ¿puedes contar del 1 al 10?"
+CONTEXT_SIZE = 512
+MAX_OUTPUT = 2048
+
+def run_rkllm(prompt: str):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file_path = os.path.join(LOG_DIR, f"qwen3_log_{timestamp}.txt")
+
+    # Lanzamos rkllm en modo TTY con pexpect
+    child = pexpect.spawn(
+        f"/usr/bin/rkllm {MODEL_PATH} {CONTEXT_SIZE} {MAX_OUTPUT}",
+        encoding='utf-8',
+        timeout=None
+    )
+
+    with open(log_file_path, "w", encoding="utf-8") as log_file:
+        # Esperamos primer prompt "You:" inicial
+        child.expect("You:")
+
+        # Enviamos nuestro prompt
+        child.sendline(prompt)
+
+        # Esperamos hasta el siguiente prompt "You:" que indica fin de respuesta
+        child.expect("You:")
+        respuesta = child.before  # Contenido generado por el modelo
+
+        # Guardamos la respuesta en el log y mostramos en pantalla
+        print(respuesta, end="")
+        log_file.write(respuesta)
+        log_file.flush()
+
+        # Cerramos el modelo limpiamente
+        try:
+            child.sendline("quit")
+            child.expect(pexpect.EOF)  # Esperamos que el proceso termine
+        except pexpect.ExceptionPexpect:
+            # Si falla, hacemos un close forzado
+            child.close(force=True)
+
+    print(f"\nRespuesta guardada en {log_file_path}")
+
+if __name__ == "__main__":
+    run_rkllm(PROMPT)
+```
+por consola
+```python
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Wrapper rkllm con Qwen3:
+
+- Envía un prompt
+- Guarda toda la salida en logs con fecha/hora en tiempo real
+- Cierra automáticamente el modelo al terminar
+"""
+
+import subprocess
+import datetime
+import os
+import sys
+import select
+import time
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+
+MODEL_PATH = os.path.join(
+    PROJECT_ROOT,
+    "rknnllm-models",
+    "Qwen3-4B-rk3588-1.2.1",
+    "Qwen3-4B-rk3588-w8a8-opt-1-hybrid-ratio-0.0.rkllm"
+)
+
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+PROMPT = "Hola, ¿puedes contar del 1 al 10?"
+CONTEXT_SIZE = 512
+MAX_OUTPUT = 2048
+TIMEOUT = 20  # segundos máximos de espera para la respuesta
+
+def run_rkllm(prompt: str):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file_path = os.path.join(LOG_DIR, f"qwen3_log_{timestamp}.txt")
+
+    with open(log_file_path, "w", encoding="utf-8", buffering=1) as log_file:
+        # Lanzamos rkllm como subproceso
+        process = subprocess.Popen(
+            ["/usr/bin/rkllm", MODEL_PATH, str(CONTEXT_SIZE), str(MAX_OUTPUT)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+
+        # Enviamos el prompt
+        process.stdin.write(prompt + "\n")
+        process.stdin.flush()
+
+        start_time = time.time()
+        while True:
+            ready, _, _ = select.select([process.stdout], [], [], 0.1)
+            if ready:
+                line = process.stdout.readline()
+                if line:
+                    print(line, end="")
+                    log_file.write(line)
+                    log_file.flush()
+            # Timeout para cerrar automáticamente
+            if time.time() - start_time > TIMEOUT:
+                break
+
+        # Cerramos el modelo
+        process.stdin.close()
+        process.kill()
+        process.wait()
+
+    print(f"\nRespuesta guardada en {log_file_path}")
+
+if __name__ == "__main__":
+    run_rkllm(PROMPT)
+
+
+```
+## Fase 1 Selector de logs 
 ```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
